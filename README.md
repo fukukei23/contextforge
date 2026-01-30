@@ -130,3 +130,4 @@ python contextforge.py --ui
 
 - **License**: MIT License（OSS）
 - **Status**: **Experimental / Early-stage** — 仕様変更や破壊的変更の可能性があります。個人・検証用途での利用を想定しています。
+- Pro edition details: docs/pro.md
