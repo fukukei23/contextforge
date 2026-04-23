@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "contextforge"
+version = "1.0.0"
+description = "Design deterministic input artifacts for LLMs."
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.9"
+dependencies = [
+    "gradio>=4.0",
+    "python-dotenv",
+    "networkx",
+    "requests",
+]
+
+[project.scripts]
+contextforge = "contextforge:main"
+
+[tool.setuptools]
+py-modules = ["contextforge"]

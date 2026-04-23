@@ -87,6 +87,8 @@ COMMON_EXCLUDE_FILES = [
     "*.ttf", "*.otf", "*.woff", "*.woff2", "*.eot",
     "*.zip", "*.rar", "*.7z", "*.tar", "*.gz", "*.iso", "*.dmg",
     "*.db", "*.sqlite3", "*.log", "*.jsonl", "*.DS_Store", "*.swp", "*.swo",
+    # 秘密漏洩防止: 環境変数・鍵等をデフォルト除外
+    ".env", "*.env", "*.pem", "*.key", "*.p12", "*.pfx", "*id_rsa*",
 ]
 # ★★★★★ [FIX] 除外ディレクトリのパターンから末尾の/**を削除 ★★★★★
 COMMON_EXCLUDE_DIRS = [
@@ -98,12 +100,37 @@ COMMON_EXCLUDE_DIRS = [
     "**/typings",
 ]
 
+# fill_policy="relax" 時に追加収集する拡張子（テキスト系設計資産のみ）
+RELAXED_INCLUDE_EXTENSIONS = {".md", ".txt", ".toml", ".yaml", ".yml", ".json"}
+
 PROFILES: Dict[str, Dict[str, Any]] = {
     "gemini-chronicle": {
         "description": "Gemini向け。Git年代記と結合コードを含む4ファイル構成のZIP。",
         "target_mb": 9.5, "output_mode": "chronicle_zip", "max_single_mb": 4.0,
         "exclude_globs": {"dirs": COMMON_EXCLUDE_DIRS, "files": COMMON_EXCLUDE_FILES},
         "priority_files": ["**/readme.md", "**/main.py", "**/app.py", "**/orchestrator.py"],
+    },
+    "claude-chronicle-30mb": {
+        "description": "Claude Web UI向け（30MB制限）。大容量の年代記ZIPパッケージ。",
+        "target_mb": 28.5, "output_mode": "chronicle_zip", "max_single_mb": 10.0,
+        "fill_to_target": False, "fill_policy": "strict",
+        "exclude_globs": {"dirs": COMMON_EXCLUDE_DIRS, "files": COMMON_EXCLUDE_FILES},
+        "priority_files": [
+            "**/ARCHITECTURE.md", "**/PROJECT_PROFILE*.md",
+            "**/readme.md", "**/main.py", "**/app.py", "**/orchestrator.py",
+            "**/docs/**", "**/spec/**", "**/src/**",
+        ],
+    },
+    "claude-chronicle-30mb-fill": {
+        "description": "Claude Web UI向け（30MB制限・実験用）。relaxで容量を埋める年代記ZIP。",
+        "target_mb": 28.5, "output_mode": "chronicle_zip", "max_single_mb": 10.0,
+        "fill_to_target": True, "fill_policy": "relax",
+        "exclude_globs": {"dirs": COMMON_EXCLUDE_DIRS, "files": COMMON_EXCLUDE_FILES},
+        "priority_files": [
+            "**/ARCHITECTURE.md", "**/PROJECT_PROFILE*.md",
+            "**/readme.md", "**/main.py", "**/app.py", "**/orchestrator.py",
+            "**/docs/**", "**/spec/**", "**/src/**",
+        ],
     },
     "gemini-single-file": {
         "description": "Gemini(ZIP非対応時)向け。全情報を単一のマークダウンファイルに結合。",
@@ -215,6 +242,14 @@ def glob_match(path: Path, patterns: List[str]) -> bool:
     # パスの各部分がパターンのいずれかに一致するかどうかをチェック
     path_str = str(path)
     return any(fnmatch.fnmatch(path_str, p) or any(part in path_str for part in p.split('/')) for p in patterns)
+
+def which_glob_match(path: Path, patterns: List[str]) -> Optional[str]:
+    """最初に一致したパターンを返す。一致なしなら None。"""
+    path_str = str(path)
+    for p in patterns:
+        if fnmatch.fnmatch(path_str, p) or any(part in path_str for part in p.split('/')):
+            return p
+    return None
 
 
 def get_file_stats(p: Path) -> Tuple[int, float]:
@@ -334,35 +369,117 @@ def score_files(items: List[FileItem], log: LogSink) -> None:
         if item.loc > 0: score += min(log2(item.loc + 1), 5)
         item.score = score
 
-def collect_and_score_files(root: Path, exclude_globs: Dict[str, List[str]], log: LogSink) -> List[FileItem]:
+def collect_and_score_files(
+    root: Path, exclude_globs: Dict[str, List[str]], log: LogSink,
+    diagnose: Optional[Dict[str, Any]] = None
+) -> List[FileItem]:
     log.write_header(f"ファイル収集開始: {root}")
     items: List[FileItem] = []
-    
-    # 正規化された除外パターンを作成
+    if diagnose is not None:
+        diagnose.setdefault("walk_total_dirs", 0)
+        diagnose.setdefault("walk_total_files", 0)
+        diagnose.setdefault("excluded_by_dir", {})
+        diagnose.setdefault("excluded_by_ext", {})
+        diagnose.setdefault("excluded_by_size", 0)
+        diagnose.setdefault("excluded_by_error", {})
+        diagnose.setdefault("included_by_ext", {})
+        diagnose.setdefault("included_by_dir", {})
+
     normalized_exclude_dirs = [str(Path(p)) for p in exclude_globs["dirs"]]
 
     for dirpath, dirnames, filenames in os.walk(root, topdown=True):
         current_dir = Path(dirpath)
-        
-        # os.walkから直接渡されるdirnamesをフィルタリング
-        dirnames[:] = [d for d in dirnames if not any(fnmatch.fnmatch(str(current_dir / d), pattern) for pattern in normalized_exclude_dirs)]
-        
+        if diagnose is not None:
+            diagnose["walk_total_dirs"] += 1
+
+        new_dirs = []
+        for d in dirnames:
+            full = current_dir / d
+            matched = None
+            for pattern in normalized_exclude_dirs:
+                if fnmatch.fnmatch(str(full), pattern):
+                    matched = pattern
+                    break
+            if matched is not None:
+                if diagnose is not None:
+                    diagnose["excluded_by_dir"][matched] = diagnose["excluded_by_dir"].get(matched, 0) + 1
+            else:
+                new_dirs.append(d)
+        dirnames[:] = new_dirs
+
         for filename in filenames:
             path = current_dir / filename
+            if diagnose is not None:
+                diagnose["walk_total_files"] += 1
+            pat = which_glob_match(path, exclude_globs["files"]) if diagnose is not None else None
             if glob_match(path, exclude_globs["files"]):
+                if diagnose is not None and pat:
+                    diagnose["excluded_by_ext"][pat] = diagnose["excluded_by_ext"].get(pat, 0) + 1
                 continue
             try:
-                if (size := path.stat().st_size) > 0:
-                    loc, entropy = get_file_stats(path)
-                    items.append(FileItem(path=path, root=root, rel_path=path.relative_to(root), size_bytes=size, loc=loc, entropy=entropy))
-            except Exception:
+                size = path.stat().st_size
+                if size <= 0:
+                    if diagnose is not None:
+                        diagnose["excluded_by_size"] += 1
+                    continue
+                loc, entropy = get_file_stats(path)
+                item = FileItem(path=path, root=root, rel_path=path.relative_to(root), size_bytes=size, loc=loc, entropy=entropy)
+                items.append(item)
+                if diagnose is not None:
+                    ext = (item.path.suffix or "(no ext)").lower()
+                    diagnose["included_by_ext"][ext] = diagnose["included_by_ext"].get(ext, 0) + 1
+                    top_dir = item.rel_path.parts[0] if len(item.rel_path.parts) > 1 else "."
+                    diagnose["included_by_dir"][top_dir] = diagnose["included_by_dir"].get(top_dir, 0) + 1
+            except Exception as e:
+                if diagnose is not None:
+                    name = type(e).__name__
+                    diagnose["excluded_by_error"][name] = diagnose["excluded_by_error"].get(name, 0) + 1
                 continue
     log.write(f"  - 収集完了: {len(items)} ファイル")
     score_files(items, log)
     return sorted(items, key=lambda x: x.score, reverse=True)
 
 
-def select_files(items: List[FileItem], profile: Dict[str, Any], compression_ratios: defaultdict) -> Tuple[List[FileItem], List[Tuple[float, Path]]]:
+def collect_relaxed_additional(
+    root: Path, exclude_globs: Dict[str, List[str]], picked_paths: Set[Path],
+    profile: Dict[str, Any], log: LogSink
+) -> List[FileItem]:
+    """fill_policy=relax 時、テキスト系設計資産（.md/.txt/.toml/.yaml/.yml/.json）を追加収集する。"""
+    max_single_bytes = profile["max_single_mb"] * 1024**2
+    priority_globs = profile.get("priority_files", [])
+    relaxed_dirs = [d for d in exclude_globs["dirs"] if d not in ("**/build", "**/dist")]
+    normalized_exclude_dirs = [str(Path(p)) for p in relaxed_dirs]
+
+    additional: List[FileItem] = []
+    for dirpath, dirnames, filenames in os.walk(root, topdown=True):
+        current_dir = Path(dirpath)
+        dirnames[:] = [d for d in dirnames if not any(fnmatch.fnmatch(str(current_dir / d), p) for p in normalized_exclude_dirs)]
+        for filename in filenames:
+            path = current_dir / filename
+            if path in picked_paths:
+                continue
+            if path.suffix.lower() not in RELAXED_INCLUDE_EXTENSIONS:
+                continue
+            if glob_match(path, exclude_globs["files"]):
+                continue
+            try:
+                if (size := path.stat().st_size) > max_single_bytes or size <= 0:
+                    continue
+                loc, entropy = get_file_stats(path)
+                additional.append(FileItem(path=path, root=root, rel_path=path.relative_to(root), size_bytes=size, loc=loc, entropy=entropy))
+            except Exception:
+                continue
+    if additional:
+        priority_items = [i for i in additional if glob_match(i.rel_path, priority_globs)]
+        remaining_items = [i for i in additional if not glob_match(i.rel_path, priority_globs)]
+        return priority_items + remaining_items
+    return []
+
+
+def select_files(
+    items: List[FileItem], profile: Dict[str, Any], compression_ratios: defaultdict,
+    root: Optional[Path] = None, exclude_globs: Optional[Dict[str, List[str]]] = None, log: Optional[LogSink] = None
+) -> Tuple[List[FileItem], List[Tuple[float, Path]]]:
     target_bytes = profile["target_mb"] * 1024 * 1024
     max_single_bytes = profile["max_single_mb"] * 1024**2
     selection_mode = profile.get("selection_mode", "compressed")
@@ -404,6 +521,48 @@ def select_files(items: List[FileItem], profile: Dict[str, Any], compression_rat
         picked.append(item)
         picked_paths.add(item.path)
         current_size += size_to_add
+
+    fill_to_target = profile.get("fill_to_target", False)
+    fill_policy = profile.get("fill_policy", "strict")
+    relax_attempted = False
+    relax_added_count = 0
+
+    if fill_to_target and fill_policy == "relax" and root and exclude_globs and current_size < target_bytes * 0.99:
+        relax_attempted = True
+        size_before_relax = current_size
+        additional = collect_relaxed_additional(root, exclude_globs, picked_paths, profile, log)
+        for item in additional:
+            if item.path in picked_paths:
+                continue
+            if item.size_bytes > max_single_bytes:
+                continue
+            if selection_mode == 'raw':
+                size_to_add = item.size_bytes
+            else:
+                base_ratio = compression_ratios[item.path.suffix.lower()]
+                entropy_factor = 1.0 - (abs(item.entropy - 4.5) / 8.0) * 0.4
+                final_ratio = max(0.05, min(0.95, base_ratio * entropy_factor))
+                predicted_zip_bytes = item.size_bytes * final_ratio
+                if isnan(predicted_zip_bytes): predicted_zip_bytes = item.size_bytes
+                size_to_add = predicted_zip_bytes
+            if current_size + size_to_add > target_bytes:
+                continue
+            picked.append(item)
+            picked_paths.add(item.path)
+            current_size += size_to_add
+            relax_added_count += 1
+        if log and relax_attempted:
+            relax_delta_mb = (current_size - size_before_relax) / 1024**2
+            if relax_added_count > 0:
+                log.write(f"  - fill_mode=relax: 発動。追加 {relax_added_count} 件、推定サイズ +{relax_delta_mb:.2f} MB")
+            else:
+                log.write(f"  - fill_mode=relax: 発動。追加可能ファイルなし ({current_size/1024**2:.2f} MB)")
+
+    if fill_to_target and log:
+        if fill_policy == "strict":
+            log.write(f"  - fill_mode=strict: 候補内で最大選択。目標未達の場合はそのまま終了 ({current_size/1024**2:.2f} MB)")
+        elif fill_policy == "relax" and not relax_attempted:
+            log.write(f"  - fill_mode=relax: strictで目標達成のため発動せず ({current_size/1024**2:.2f} MB)")
         
     return picked, heavy
 
@@ -561,11 +720,58 @@ class GuardianWatcher(Thread):
                 else: self.log.write(f"...次の自動実行まであと {self.commit_trigger - commit_count_since_last_run} コミット")
         self.log.write("🛡️ ガーディアンモードが停止しました。")
 
+def write_diagnose_report(diagnose: Dict[str, Any], report_path: Path, console_top_n: int = 10, file_top_n: int = 50) -> None:
+    """診断レポートをファイルに書き、コンソールに概要（上位N件）を出力する。"""
+    def _top(d: Dict[str, Any], n: int) -> List[Tuple[str, Any]]:
+        return sorted(d.items(), key=lambda x: x[1], reverse=True)[:n]
+
+    lines = ["# ContextForge 診断レポート", ""]
+    lines.append(f"- **walk_total_dirs**: {diagnose.get('walk_total_dirs', 0):,}")
+    lines.append(f"- **walk_total_files**: {diagnose.get('walk_total_files', 0):,}")
+    lines.append("")
+
+    for section, key, title in [
+        ("excluded_by_dir", "excluded_by_dir", "除外（ディレクトリパターン）"),
+        ("excluded_by_ext", "excluded_by_ext", "除外（ファイルglob）"),
+        ("excluded_by_size", None, "除外（サイズ0）"),
+        ("excluded_by_error", "excluded_by_error", "除外（例外）"),
+        ("included_by_ext", "included_by_ext", "採用（拡張子）"),
+        ("included_by_dir", "included_by_dir", "採用（トップディレクトリ）"),
+    ]:
+        if key is None:
+            lines.append(f"## {title}\n\n{diagnose.get('excluded_by_size', 0):,}\n")
+            continue
+        data = diagnose.get(key, {})
+        if not data:
+            lines.append(f"## {title}\n\n(なし)\n")
+            continue
+        lines.append(f"## {title}\n")
+        lines.append("| 項目 | 件数 |")
+        lines.append("|---|---|")
+        for k, v in _top(data, file_top_n):
+            lines.append(f"| `{k}` | {v:,} |")
+        if len(data) > file_top_n:
+            lines.append(f"| ...他 {len(data) - file_top_n} 件 | |")
+        lines.append("")
+
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    report_path.write_text("\n".join(lines), encoding="utf-8")
+
+    print("\n--- 診断概要（上位{}件） ---".format(console_top_n))
+    print(f"walk_total_dirs: {diagnose.get('walk_total_dirs', 0):,}  |  walk_total_files: {diagnose.get('walk_total_files', 0):,}")
+    print(f"excluded_by_size: {diagnose.get('excluded_by_size', 0):,}")
+    for key, title in [("excluded_by_dir", "excluded_by_dir"), ("excluded_by_ext", "excluded_by_ext"), ("excluded_by_error", "excluded_by_error"), ("included_by_ext", "included_by_ext"), ("included_by_dir", "included_by_dir")]:
+        data = diagnose.get(key, {})
+        if data:
+            print(f"{title} (top {console_top_n}): {dict(_top(data, console_top_n))}")
+    print(f"レポート: {report_path}\n")
+
 def export_main_generator(
     root_str: str, profile_name: str, emit_zip: bool, emit_folder: bool, dry_run: bool,
     exports_dir: Path, logs_dir: Path, stop_event: Event,
     api_token: Optional[str] = None,
-    progress: Optional[gr.Progress] = None
+    progress: Optional[gr.Progress] = None,
+    diagnose: bool = False
 ) -> Iterator[str]:
     log = LogSink(logs_dir, dry_run)
     try:
@@ -579,12 +785,21 @@ def export_main_generator(
         compression_ratios = load_compression_ratios(log); yield log.get_full_log()
         
         if progress: progress(0.1, desc="ファイル収集とスコアリング...")
-        items = collect_and_score_files(root, profile["exclude_globs"], log); yield log.get_full_log()
+        diagnose_dict: Optional[Dict[str, Any]] = {} if diagnose else None
+        items = collect_and_score_files(root, profile["exclude_globs"], log, diagnose=diagnose_dict); yield log.get_full_log()
+        if diagnose and diagnose_dict is not None:
+            ts = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
+            root_label = root.resolve().name or "cwd"
+            report_path = exports_dir / f"DIAGNOSE_{root_label}_{profile_name}_{ts}.md"
+            write_diagnose_report(diagnose_dict, report_path, console_top_n=10, file_top_n=50)
         
         if stop_event.is_set(): log.write("⏹️ キャンセルされました"); yield log.get_full_log(); return
         
         if progress: progress(0.3, desc="ファイル選択...")
-        picked_items, heavy = select_files(items, profile, compression_ratios)
+        picked_items, heavy = select_files(
+            items, profile, compression_ratios,
+            root=root, exclude_globs=profile.get("exclude_globs"), log=log
+        )
         
         total_raw_bytes = sum(item.size_bytes for item in picked_items)
         predicted_zip_bytes_sum = 0.0
@@ -729,7 +944,46 @@ def export_main_generator(
         yield log.get_full_log()
 
 # ============================================================================
-# 7. UI & CLI
+# 7. Purge exports（危険操作）
+# ============================================================================
+def purge_exports(exports_dir: Path, keep_last: int = 0) -> None:
+    """exports_dir 直下の削除対象（*.zip, *.md ただし DIAGNOSE_*.md 除外）を削除する。
+    compression_stats.json と DIAGNOSE_*.md は常に除外。keep_last > 0 のとき最新 N 件を残す。"""
+    if not exports_dir.is_dir():
+        return
+    deletable: List[Path] = []
+    for p in exports_dir.iterdir():
+        if not p.is_file():
+            continue
+        if p.name == "compression_stats.json":
+            continue
+        if fnmatch.fnmatch(p.name, "DIAGNOSE_*.md"):
+            continue
+        if p.suffix.lower() == ".zip" or (p.suffix.lower() == ".md" and not fnmatch.fnmatch(p.name, "DIAGNOSE_*.md")):
+            deletable.append(p)
+    if not deletable:
+        print("purge-exports: 削除対象 0 件")
+        return
+    deletable.sort(key=lambda x: x.stat().st_mtime, reverse=True)
+    if keep_last > 0:
+        to_delete = deletable[keep_last:]
+    else:
+        to_delete = deletable
+    if not to_delete:
+        print(f"purge-exports: keep-last={keep_last} のため削除対象 0 件")
+        return
+    print(f"purge-exports: 削除対象 {len(to_delete)} 件（keep-last={keep_last}）")
+    for f in to_delete:
+        print(f"  - {f.name}")
+    for f in to_delete:
+        try:
+            f.unlink()
+        except OSError as e:
+            print(f"  ❌ 削除失敗: {f.name} - {e}")
+    print("purge-exports: 削除完了")
+
+# ============================================================================
+# 8. UI & CLI
 # ============================================================================
 def create_gradio_interface(initial_api_token: Optional[str] = None):
     if not gr: return print("Gradio未インストール。`pip install gradio`でUIが有効になります。")
@@ -821,6 +1075,9 @@ def main():
     parser.add_argument("--emit-zip", action="store_true", help="[gpt5-zip] ZIP出力")
     parser.add_argument("--emit-folder", action="store_true", help="[gpt5-zip] フォルダ出力")
     parser.add_argument("--dry-run", action="store_true", help="ドライランモード")
+    parser.add_argument("--diagnose", action="store_true", help="収集フェーズの診断レポートを出力（exports/DIAGNOSE_*.md）")
+    parser.add_argument("--purge-exports", action="store_true", help="[危険] exports/ 内の成果物を削除（compression_stats.json と DIAGNOSE_*.md は除外）")
+    parser.add_argument("--keep-last", type=int, default=0, metavar="N", help="[purge時] 最新 N 件を残して削除（0 で全削除）")
     parser.add_argument("--ui", action="store_true", help="Gradio UIを起動")
     parser.add_argument("--watch", action="store_true", help="ガーディアンモードで起動")
     parser.add_argument("--watch-interval", type=int, default=60, help="[Watch] 監視間隔 (秒)")
@@ -846,7 +1103,9 @@ def main():
             stop_event.set()
             watcher.join()
     else:
-        for _ in export_main_generator(args.root, args.profile, args.emit_zip, args.emit_folder, args.dry_run, DEFAULT_EXPORTS_DIR, DEFAULT_LOGS_DIR, Event(), api_token):
+        if args.purge_exports:
+            purge_exports(DEFAULT_EXPORTS_DIR, keep_last=args.keep_last)
+        for _ in export_main_generator(args.root, args.profile, args.emit_zip, args.emit_folder, args.dry_run, DEFAULT_EXPORTS_DIR, DEFAULT_LOGS_DIR, Event(), api_token, diagnose=args.diagnose):
             pass
 
 if __name__ == "__main__":

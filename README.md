@@ -2,6 +2,8 @@
 
 **Design deterministic input artifacts for LLMs.**
 
+![ContextForge Demo](assets/demo.gif)
+
 → 解析しない。エージェントではない。
 
 ---
@@ -81,11 +83,31 @@ exports/
 - **セキュリティ／構造レビュー前の入力固定**：前提を揃えてから依頼したいとき
 - **「この前提で考えて」と指示したいとき**：入力そのものを成果物として残したいとき
 
+**ツールの有用性**：「ContextForgeを使うとLLMのコードレビュー精度が上がるか」で測る設計を [docs/EVALUATION_USEFULNESS.md](docs/EVALUATION_USEFULNESS.md) にまとめています。改善を分析するときの枠組みは [docs/IMPROVEMENT_FRAMEWORK.md](docs/IMPROVEMENT_FRAMEWORK.md) を参照してください。
+
+---
+
+## Features
+
+- **決定論的出力**: 同じ入力・同じプロファイル → 常に同一の成果物
+- **複数出力形式**: ZIP、単一 Markdown、チャンク分割に対応
+- **秘密漏洩防止**: .env、*.pem、*.key などをデフォルト除外
+- **Gradio UI**: ブラウザで直感的に操作可能
+- **拡張可能**: TOML 設定でカスタムプロファイルを追加可能
+
 ---
 
 ## Quick start
 
 ### 依存のインストール（初回のみ）
+
+**パッケージからインストール（推奨）:**
+
+```bash
+pip install .
+```
+
+**または依存のみ:**
 
 ```bash
 pip install "gradio>=4.0" python-dotenv networkx requests
@@ -95,6 +117,7 @@ pip install "gradio>=4.0" python-dotenv networkx requests
 
 ```bash
 python contextforge.py --profile gemini-chronicle
+# または（pip install 後）: contextforge --profile gemini-chronicle
 ```
 
 ### UI で起動
@@ -115,7 +138,18 @@ python contextforge.py --ui
 | 互換 | 仕様・互換保証なし | 再現性・互換性保証 |
 | 用途 | 個人・検証 | 業務プリセット |
 
-👉 **ContextForge Pro** の詳細は [Pro のページ](#) をご覧ください。
+👉 **ContextForge Pro** の詳細は [Pro のページ](docs/pro.md) をご覧ください。
+
+👉 **ビジネス用途・チーム利用の場合は Pro 版がおすすめ**。再現性・互換性を保証し、業務プリセット（audit/handover/security-review/refactor-review）を含む。[Pro 版の詳細を見る](docs/pro.md)
+
+---
+
+## Release
+
+- **バージョン**: [pyproject.toml](pyproject.toml) の `version` で一箇所管理。SemVer（MAJOR.MINOR.PATCH）に従う。
+- **タグ**: リリース時は Git タグ `vX.Y.Z` を打つ（[PROJECT_PROFILE](docs/PROJECT_PROFILES/PROJECT_PROFILE_CONTEXTFORGE.md) の Repo Policy に従う）。
+- **変更履歴**: [CHANGELOG.md](CHANGELOG.md) をリリースごとに更新する。
+- **手順**: [docs/RELEASE_PROCEDURE.md](docs/RELEASE_PROCEDURE.md)。リリース前は [docs/RELEASE_CHECKLIST.md](docs/RELEASE_CHECKLIST.md) を実行する。
 
 ---
 
@@ -130,4 +164,4 @@ python contextforge.py --ui
 
 - **License**: MIT License（OSS）
 - **Status**: **Experimental / Early-stage** — 仕様変更や破壊的変更の可能性があります。個人・検証用途での利用を想定しています。
-- Pro edition details: docs/pro.md
+- Pro edition details: [docs/pro.md](docs/pro.md)

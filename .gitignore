@@ -3,3 +3,8 @@ logs/
 __pycache__/
 *.pyc
 .env
+
+.venv/
+build/
+*.egg-info/
+dist/
