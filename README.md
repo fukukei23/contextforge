@@ -2,9 +2,18 @@
 
 **Design deterministic input artifacts for LLMs.**
 
+[![Python](https://img.shields.io/badge/python-3.10+-blue)](https://www.python.org/)
+[![Tests](https://img.shields.io/badge/tests-54%20passing-brightgreen)](tests/)
+[![Coverage](https://img.shields.io/badge/coverage-55%25-yellow)](tests/)
+[![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+
 ![ContextForge Demo](assets/demo.gif)
 
-→ 解析しない。エージェントではない。
+---
+
+## なぜContextForgeを作ったか
+
+LLMにコードレビューや設計相談を依頼する際、「何を読ませたか」が分からないと再現・検証が不可能になる。ContextForgeは、**LLMへの入力そのものを決定論的な成果物として生成する**ことで、この問題を解決する。
 
 ---
 
@@ -150,6 +159,46 @@ python contextforge.py --ui
 - **タグ**: リリース時は Git タグ `vX.Y.Z` を打つ（[PROJECT_PROFILE](docs/PROJECT_PROFILES/PROJECT_PROFILE_CONTEXTFORGE.md) の Repo Policy に従う）。
 - **変更履歴**: [CHANGELOG.md](CHANGELOG.md) をリリースごとに更新する。
 - **手順**: [docs/RELEASE_PROCEDURE.md](docs/RELEASE_PROCEDURE.md)。リリース前は [docs/RELEASE_CHECKLIST.md](docs/RELEASE_CHECKLIST.md) を実行する。
+
+---
+
+## アーキテクチャ
+
+```
+プロジェクトディレクトリ
+       ↓
+  ContextForge（TOML プロファイル選択）
+       ↓
+  ┌──────────────┐
+  │ Git履歴解析   │ → PROJECT_CHRONICLE.md
+  │ ファイル選定   │ → COMBINED_CODE.py
+  │ 統計・品質    │ → PROJECT_INFO.md
+  └──────┬───────┘
+         ↓
+  出力: exports/<project>_<profile>_<timestamp>/
+         ↓ ZIP で共有可能
+```
+
+---
+
+## 技術スタック
+
+| カテゴリ | 技術 |
+|---------|------|
+| 言語 | Python 3.10+ |
+| UI | Gradio 4.0+ |
+| 設定 | TOML |
+| 依存解析 | networkx |
+| パッケージング | pyproject.toml / pip |
+
+---
+
+## テスト
+
+```bash
+# テスト実行
+python -m pytest tests/ -v
+```
 
 ---
 
