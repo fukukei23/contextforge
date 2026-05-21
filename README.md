@@ -3,8 +3,8 @@
 **Design deterministic input artifacts for LLMs.**
 
 [![Python](https://img.shields.io/badge/python-3.10+-blue)](https://www.python.org/)
-[![Tests](https://img.shields.io/badge/tests-74%20passing-brightgreen)](tests/)
-[![Coverage](https://img.shields.io/badge/coverage-74%25-yellowgreen)](tests/)
+[![Tests](https://img.shields.io/badge/tests-102%20passing-brightgreen)](tests/)
+[![Coverage](https://img.shields.io/badge/coverage-86%25-brightgreen)](tests/)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 ![ContextForge Demo](assets/demo.gif)
