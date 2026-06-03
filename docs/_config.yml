@@ -1,0 +1,15 @@
+title: ContextForge
+description: LLM向け入力アーティファクト設計ツール — 機能ショーケース
+remote_theme: just-the-docs/just-the-docs
+
+baseurl: /contextforge
+url: https://fukukei23.github.io
+
+color_scheme: light
+search_enabled: true
+
+aux_links:
+  "📂 GitHub リポジトリ":
+    - "https://github.com/fukukei23/contextforge"
+
+nav_enabled: true
