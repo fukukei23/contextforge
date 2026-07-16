@@ -3,7 +3,7 @@
 **Design deterministic input artifacts for LLMs.**
 
 [![CI](https://github.com/fukukei23/contextforge/actions/workflows/ci.yml/badge.svg)](https://github.com/fukukei23/contextforge/actions/workflows/ci.yml)
-[![Python](https://img.shields.io/badge/python-3.9+-blue)](https://www.python.org/)
+[![Python](https://img.shields.io/badge/python-3.12+-blue)](https://www.python.org/)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 ![ContextForge Demo](assets/demo.gif)
